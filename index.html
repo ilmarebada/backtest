@@ -59,7 +59,15 @@ td:first-child,th:first-child{text-align:left}
 .tabs button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
 .msg{padding:14px;border-radius:10px;background:#1a2550;color:var(--mute);margin-bottom:16px}
 .note{font-size:13px;color:var(--mute);margin-top:12px}
-@media(max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.presets button{min-height:36px;padding:0 12px;font-size:14px;background:transparent;color:var(--mute);border:1px solid var(--line)}
+.presets button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.fig.sm{height:170px}.fig.md{height:250px}
+.more{margin-top:16px}.duo{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;margin-top:16px}
+.cap{font-size:13px;color:var(--mute);margin:-6px 0 8px}
+.tip{position:absolute;pointer-events:none;background:#0b1433f0;border:1px solid #3a4a8a;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.55;white-space:nowrap;z-index:2}
+.tip b{font-weight:600}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+@media(max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}.duo{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:600px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.fig{height:260px}}
 </style>
 </head>
@@ -74,9 +82,10 @@ td:first-child,th:first-child{text-align:left}
       <label for="csv">또는 CSV 파일 올리기 (야후 형식)</label>
       <input type="file" id="csv" accept=".csv">
       <div class="two">
-        <div><label for="from">시작일</label><input type="date" id="from" value="2015-01-01"></div>
+        <div><label for="from">시작일</label><input type="date" id="from"></div>
         <div><label for="to">종료일</label><input type="date" id="to"></div>
       </div>
+      <div class="presets" id="presets"><button type="button" data-y="1">1년</button><button type="button" data-y="3">3년</button><button type="button" data-y="5">5년</button><button type="button" data-y="10">10년</button><button type="button" data-y="0">전체</button></div>
       <fieldset><legend>무한매수법 V4.0</legend>
         <div class="two">
           <div><label for="seed">원금($)</label><input type="number" id="seed" value="10000" min="100"></div>
@@ -107,8 +116,17 @@ td:first-child,th:first-child{text-align:left}
         <div class="msg" id="state" hidden></div>
         <div class="panel">
           <h2 id="title"></h2>
-          <div class="fig"><svg id="chart" role="img" aria-label="자산 곡선"></svg></div>
-          <div class="legend"><span><s style="background:var(--a)"></s>무한매수법</span><span><s style="background:var(--b)"></s><span id="bhLg">단순 보유</span></span><span id="benchLg" hidden><s style="background:#c9b8ff"></s><span id="benchTx"></span></span><label class="chk"><input type="checkbox" id="logScale" checked> 로그 스케일</label></div>
+          <div class="fig" id="mainFig"><svg id="chart" role="img" aria-label="자산 곡선"></svg><div class="tip" id="tip" hidden></div></div>
+          <div class="legend"><span><s style="background:var(--a)"></s>무한매수법</span><span><s style="background:var(--b)"></s><span id="bhLg">단순 보유</span></span><span id="benchLg" hidden><s style="background:#c9b8ff"></s><span id="benchTx"></span></span><span><s style="background:#e8452c;opacity:.45;height:10px"></s>리버스모드 구간</span><span><span class="dot" style="background:#7ee08a"></span>사이클 종료</span><label class="chk"><input type="checkbox" id="logScale" checked> 로그 스케일</label></div>
+        </div>
+        <div class="panel more">
+          <h2>고점 대비 낙폭</h2>
+          <p class="cap">각 시점에 직전 최고 자산에서 얼마나 떨어져 있었는지 보여줘요.</p>
+          <div class="fig sm"><svg id="dd" role="img" aria-label="낙폭 그래프"></svg></div>
+        </div>
+        <div class="duo">
+          <div class="panel"><h2>연도별 수익률</h2><p class="cap" id="yrCap"></p><div class="fig md"><svg id="yr" role="img" aria-label="연도별 수익률"></svg></div></div>
+          <div class="panel"><h2>자금 투입률</h2><p class="cap">원금 중 주식에 들어가 있던 비율 (T ÷ 분할수, 20일 평균)</p><div class="fig md"><svg id="inv" role="img" aria-label="자금 투입률"></svg></div></div>
         </div>
         <div class="tabs" role="tablist">
           <button type="button" class="on" data-t="cycles">사이클</button>
@@ -131,7 +149,17 @@ const pct = v => `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${
 let data = {}, csvBars = null, last = null, tab = 'cycles', benchMap = {};
 fetch('data/benchmarks.json').then(r => r.json()).then(m => { benchMap = m; }).catch(() => {});
 const history = [];
-$('to').value = new Date().toISOString().slice(0, 10);
+const ymd = d => new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+const today = ymd(new Date());
+$('to').value = today;
+const setPreset = y => {
+  const d = new Date(); if (y) d.setFullYear(d.getFullYear() - y);
+  $('from').value = y ? ymd(d) : '1990-01-01'; $('to').value = today;
+  document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', +b.dataset.y === y));
+};
+document.querySelectorAll('#presets button').forEach(b => b.onclick = () => setPreset(+b.dataset.y));
+$('from').oninput = () => document.querySelectorAll('#presets button').forEach(b => b.classList.remove('on'));
+setPreset(10);
 
 fetch('data/tickers.json').then(r => r.json()).then(list => {
   const groups = [
@@ -211,7 +239,7 @@ function render() {
   const st = last.state;
   $('state').hidden = !st;
   if (st) $('state').innerHTML = `<b>마지막 날 상태</b> · ${st.mode === 'reverse' ? '리버스모드' : '일반모드'} · T ${fmt(st.T, 3)} · 보유 ${st.shares}주 · 평단 $${fmt(st.avg, 2)} · 잔금 $${fmt(st.cash)} · 다음 ${st.mode === 'reverse' ? '쿼터매수금' : '1회매수금'} $${fmt(st.unit)}`;
-  draw(); table();
+  drawAll(); table();
 }
 
 const svg = $('chart');
@@ -230,9 +258,87 @@ function draw() {
   }
   const ticks = W < 520 ? 2 : 5;
   for (let k = 0; k <= ticks; k++) { const i = Math.round((n - 1) * k / ticks); g += `<text x="${x(i)}" y="${H - 6}" fill="#9aa6d6" font-size="12" text-anchor="${k === 0 ? 'start' : k === ticks ? 'end' : 'middle'}">${a[i].d.slice(0, W < 520 ? 4 : 7)}</text>`; }
-  svg.innerHTML = g + (c.length ? `<path d="${path(c)}" fill="none" stroke="#c9b8ff" stroke-width="1.5" opacity=".9"/>` : '') + `<path d="${path(b)}" fill="none" stroke="#f7e463" stroke-width="1.5" opacity=".85"/><path d="${path(a)}" fill="none" stroke="#4fc1c6" stroke-width="2"/>`;
+  let bands = '';
+  for (let i = 0; i < n; i++) if (a[i].m === 'reverse' && (i === 0 || a[i - 1].m !== 'reverse')) {
+    let j = i; while (j + 1 < n && a[j + 1].m === 'reverse') j++;
+    bands += `<rect x="${x(i).toFixed(1)}" y="${T}" width="${Math.max(2, x(j) - x(i)).toFixed(1)}" height="${H - T - B}" fill="#e8452c" opacity=".16"/>`;
+  }
+  const idx = new Map(a.map((e, i) => [e.d, i]));
+  const marks = last.cycles.filter(cy => cy.ret != null && idx.has(cy.end)).map(cy => { const i = idx.get(cy.end);
+    return `<circle cx="${x(i).toFixed(1)}" cy="${y(a[i].v).toFixed(1)}" r="3.2" fill="${cy.pnl > 0 ? '#7ee08a' : '#e8452c'}" stroke="#0b1433" stroke-width="1"/>`; }).join('');
+  svg.innerHTML = bands + g + (c.length ? `<path d="${path(c)}" fill="none" stroke="#c9b8ff" stroke-width="1.5" opacity=".9"/>` : '') + `<path d="${path(b)}" fill="none" stroke="#f7e463" stroke-width="1.5" opacity=".85"/><path d="${path(a)}" fill="none" stroke="#4fc1c6" stroke-width="2"/>` + marks + `<line id="hair" y1="${T}" y2="${H - B}" stroke="#e9edff" stroke-opacity=".5" stroke-dasharray="3 3" visibility="hidden"/>`;
+  geo = { L, R, W, n };
 }
-const ro = new ResizeObserver(draw); ro.observe(svg);
+let geo = null;
+const money = v => '$' + fmt(v);
+svg.onpointermove = e => {
+  if (!last || !geo) return;
+  const r = svg.getBoundingClientRect(), px = e.clientX - r.left;
+  const i = Math.max(0, Math.min(geo.n - 1, Math.round((px - geo.L) / (geo.W - geo.L - geo.R) * (geo.n - 1))));
+  const a = last.equity[i], b = last.bh.equity[i], c = last.bench && last.bench.equity[i], xx = geo.L + i / (geo.n - 1) * (geo.W - geo.L - geo.R);
+  const hair = $('hair'); hair.setAttribute('x1', xx); hair.setAttribute('x2', xx); hair.setAttribute('visibility', 'visible');
+  const N = last.params.splits;
+  $('tip').innerHTML = `<b>${a.d}</b><br><span class="dot" style="background:#4fc1c6"></span>무한매수법 ${money(a.v)}<br><span class="dot" style="background:#f7e463"></span>${last.ticker} 보유 ${money(b.v)}` +
+    (c ? `<br><span class="dot" style="background:#c9b8ff"></span>${last.bench.t} 보유 ${money(c.v)}` : '') +
+    `<br><span style="color:#9aa6d6">${a.m === 'reverse' ? '리버스모드' : a.m === 'normal' ? '일반모드' : '대기'} · T ${fmt(a.t, 2)} / ${N}</span>`;
+  const tip = $('tip'); tip.hidden = false;
+  const tw = tip.offsetWidth, fw = $('mainFig').clientWidth;
+  tip.style.left = (xx + 12 + tw > fw ? xx - tw - 12 : xx + 12) + 'px'; tip.style.top = '8px';
+};
+svg.onpointerleave = () => { $('tip').hidden = true; const h = $('hair'); if (h) h.setAttribute('visibility', 'hidden'); };
+
+// 고점 대비 낙폭
+function drawDD() {
+  const s = $('dd'), W = s.clientWidth, H = s.clientHeight, L = 56, R = 10, T = 8, B = 22;
+  const ser = [[last.equity, '#4fc1c6', 2], [last.bh.equity, '#f7e463', 1.2]].concat(last.bench ? [[last.bench.equity, '#c9b8ff', 1.2]] : []);
+  const dd = ser.map(([arr, col, w]) => { let pk = 0; return [arr.map(e => { pk = Math.max(pk, e.v); return e.v / pk - 1; }), col, w]; });
+  const n = last.equity.length, lo = Math.min(-0.05, ...dd.flatMap(d => d[0]));
+  const x = i => L + i / (n - 1) * (W - L - R), y = v => T + (v / lo) * (H - T - B);
+  let g = '';
+  for (const k of [0, 0.5, 1]) { const v = lo * k, yy = y(v); g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="#243166"/><text x="${L - 6}" y="${yy + 4}" fill="#9aa6d6" font-size="12" text-anchor="end">${k ? fmt(v * 100) : 0}%</text>`; }
+  const p = arr => arr.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join('');
+  const area = `${p(dd[0][0])}L${x(n - 1)} ${y(0)}L${x(0)} ${y(0)}Z`;
+  s.innerHTML = g + `<path d="${area}" fill="#4fc1c6" opacity=".18"/>` + dd.slice(1).reverse().map(([arr, col, w]) => `<path d="${p(arr)}" fill="none" stroke="${col}" stroke-width="${w}" opacity=".8"/>`).join('') + `<path d="${p(dd[0][0])}" fill="none" stroke="#4fc1c6" stroke-width="2"/>`;
+}
+
+// 연도별 수익률
+function drawYr() {
+  const s = $('yr'), W = s.clientWidth, H = s.clientHeight, L = 44, R = 6, T = 10, B = 24;
+  const ser = [[last.equity, '#4fc1c6'], [last.bh.equity, '#f7e463']].concat(last.bench ? [[last.bench.equity, '#c9b8ff']] : []);
+  const years = [...new Set(last.equity.map(e => e.d.slice(0, 4)))];
+  const rets = ser.map(([arr]) => { let prev = arr[0].v; return years.map(yv => { const inY = arr.filter(e => e.d.startsWith(yv)), end = inY[inY.length - 1].v, r = end / prev - 1; prev = end; return r; }); });
+  const all = rets.flat(), hi = Math.max(0.1, ...all), lo = Math.min(-0.1, ...all);
+  const y = v => T + (hi - v) / (hi - lo) * (H - T - B), gw = (W - L - R) / years.length, bw = Math.max(2, (gw - 4) / ser.length);
+  let g = '';
+  for (const v of [hi, 0, lo]) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? '#9aa6d6' : '#243166'}"/><text x="${L - 6}" y="${y(v) + 4}" fill="#9aa6d6" font-size="12" text-anchor="end">${fmt(v * 100)}%</text>`;
+  const step = Math.ceil(years.length / Math.max(1, Math.floor((W - L) / 34)));
+  years.forEach((yv, k) => {
+    ser.forEach(([, col], j) => { const v = rets[j][k], x0 = L + k * gw + 2 + j * bw;
+      g += `<rect x="${x0.toFixed(1)}" y="${Math.min(y(v), y(0)).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${Math.abs(y(v) - y(0)).toFixed(1)}" fill="${col}"><title>${yv} ${fmt(v * 100, 1)}%</title></rect>`; });
+    if (k % step === 0) g += `<text x="${(L + k * gw + gw / 2).toFixed(1)}" y="${H - 6}" fill="#9aa6d6" font-size="12" text-anchor="middle">${W < 520 ? "'" + yv.slice(2) : yv}</text>`;
+  });
+  s.innerHTML = g;
+  const win = rets[0].filter((v, k) => v > rets[1][k]).length;
+  $('yrCap').textContent = `${years.length}개 연도 중 ${win}개 연도에서 무한매수법이 ${last.ticker} 보유보다 좋았어요.`;
+}
+
+// 자금 투입률
+function drawInv() {
+  const s = $('inv'), W = s.clientWidth, H = s.clientHeight, L = 40, R = 6, T = 10, B = 24, a = last.equity, n = a.length, N = last.params.splits;
+  const x = i => L + i / (n - 1) * (W - L - R), y = v => T + (1 - v) * (H - T - B);
+  const raw = a.map(e => e.m === 'none' ? 0 : Math.min(1, e.t / N));
+  const v = raw.map((_, i) => { const s0 = Math.max(0, i - 19), seg = raw.slice(s0, i + 1); return seg.reduce((q, t) => q + t, 0) / seg.length; });
+  let g = '';
+  for (const k of [0, 0.5, 1]) g += `<line x1="${L}" x2="${W - R}" y1="${y(k)}" y2="${y(k)}" stroke="#243166"/><text x="${L - 6}" y="${y(k) + 4}" fill="#9aa6d6" font-size="12" text-anchor="end">${k * 100}%</text>`;
+  for (let i = 0; i < n; i++) if (a[i].m === 'reverse' && (i === 0 || a[i - 1].m !== 'reverse')) { let j = i; while (j + 1 < n && a[j + 1].m === 'reverse') j++; g += `<rect x="${x(i)}" y="${T}" width="${Math.max(2, x(j) - x(i))}" height="${H - T - B}" fill="#e8452c" opacity=".16"/>`; }
+  const p = v.map((t, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(t).toFixed(1)).join('');
+  const avg = raw.reduce((q, t) => q + t, 0) / n;
+  g += `<path d="${p}L${x(n - 1)} ${y(0)}L${x(0)} ${y(0)}Z" fill="#3b4fd8" opacity=".45"/><path d="${p}" fill="none" stroke="#7f8ff0" stroke-width="1.2"/>`;
+  g += `<line x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}" stroke="#f7e463" stroke-dasharray="4 3"/><text x="${W - R}" y="${y(avg) - 4}" fill="#f7e463" font-size="12" text-anchor="end">평균 ${fmt(avg * 100)}%</text>`;
+  s.innerHTML = g;
+}
+const drawAll = () => { if (!last) return; draw(); drawDD(); drawYr(); drawInv(); };
+const ro = new ResizeObserver(drawAll); ['chart', 'dd', 'yr', 'inv'].forEach(id => ro.observe($(id)));
 $('logScale').onchange = draw;
 
 document.querySelectorAll('.tabs button').forEach(btn => btn.onclick = () => {
