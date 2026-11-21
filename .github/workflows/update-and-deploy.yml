@@ -24,9 +24,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -43,11 +40,19 @@ jobs:
           git add tickers.txt
           git diff --cached --quiet || git commit -m "티커 추가: ${{ github.event.inputs.add_tickers }}"
           git push
-      - uses: actions/configure-pages@v5
       - name: 배포할 파일 모으기
         run: mkdir -p _site && cp -r index.html engine.js og.png data _site/
+      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v5
