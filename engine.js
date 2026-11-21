@@ -1,124 +1,148 @@
-// 무한매수법 백테스트 엔진 (브라우저/Node 공용)
-// bars: [{d:'2020-01-02', o, h, l, c}] 날짜 오름차순
+// 라오어 무한매수법 V4.0 (일반모드 + 리버스모드) 백테스트 엔진 — 브라우저/Node 공용
+// bars: [{d, o, h, l, c}] 날짜 오름차순. 모든 LOC는 종가 체결, 지정가 매도는 장중 고가 도달 시 체결로 가정.
 (function (root) {
   const DEFAULTS = {
-    seed: 10000,          // 시작 원금($)
-    splits: 40,           // 분할 수
-    targetPct: 15,        // 익절 목표(평단 대비 %)
-    buyMode: 'laoer',     // 'laoer' = 평단 LOC + 큰수(평단+star%) LOC / 'prevclose' = 전일종가 -a%, -b% LOC
-    starPct: 10,          // laoer 모드: 큰수 LOC = 평단 × (1+star%)
-    locA: 1, locB: 5,     // prevclose 모드: 전일종가 -a%, -b%
-    exhaust: 'quarter',   // 분할 소진 시: 'quarter'(1/4 손절) / 'stop'(전량 손절) / 'hold'(버티기)
-    compound: true,       // 익절 후 늘어난 자산으로 재시작(복리)
-    feePct: 0.07,         // 매매 수수료(%)
-    maFilter: 0,          // 새 사이클 시작 조건: 종가 > N일 이동평균 (0=끔)
-    stopLossPct: 0        // 평단 대비 -X% 도달 시 전량 손절 (0=끔)
+    seed: 10000,      // 시작 원금($)
+    splits: 20,       // 분할 수 (20 / 40)
+    targetPct: 20,    // 목표 수익률 = 별% 시작값 (TQQQ 15, SOXL 20)
+    ladder: true,     // 하락 대비 추가 LOC(사다리) — 체결 시 1회매수금 ÷ 종가 만큼 매수
+    compound: true,   // 사이클 종료 후 전체 잔금으로 재시작(복리) / false = 원금 한도(단리)
+    feePct: 0.07,     // 매매 수수료(%)
+    maFilter: 0,      // (선택) 새 사이클 시작 조건: 종가 > N일 이동평균, 0 = 끔
+    from: '', to: ''  // 매매 기간(이전 데이터는 전일종가·이동평균·5일평균 계산에만 사용)
   };
+  const r2 = x => Math.round(x * 100) / 100;
 
   function run(bars, opt) {
     const p = Object.assign({}, DEFAULTS, opt || {});
-    const fee = p.feePct / 100;
-    let cash = p.seed, shares = 0, cost = 0, T = 0, unit = 0;
-    let cycle = null, peak = p.seed, mdd = 0;
+    const N = p.splits, tg = p.targetPct / 100, fee = p.feePct / 100;
+    const revDiv = N / 2, revMul = 1 - 2 / N;           // 20분할: 1/10·×0.9 / 40분할: 1/20·×0.95
+    let reserve = p.seed, cash = 0, shares = 0, cost = 0, T = 0;
+    let mode = 'none', revDay = 0, cycle = null, peak = p.seed, mdd = 0;
     const cycles = [], trades = [], equity = [];
     const ma = movingAvg(bars, p.maFilter);
 
-    const buy = (i, price, amount, why) => {
-      amount = Math.min(amount, cash / (1 + fee));
-      let q = Math.floor(amount / price);
-      if (q < 1 && why === '첫 매수' && cash >= price * (1 + fee)) q = 1;
+    const log = (i, side, price, q, why, dT) => trades.push({ d: bars[i].d, side, price, q, why, dT, T });
+    const buy = (i, q, why) => {
+      const px = bars[i].c;
+      q = Math.min(q, Math.floor(cash / (px * (1 + fee))));
       if (q < 1) return 0;
-      const v = q * price;
-      cash -= v * (1 + fee); shares += q; cost += v; if (cycle) cycle.pnl -= v * fee;
-      trades.push({ d: bars[i].d, side: '매수', price, q, why });
+      cash -= q * px * (1 + fee); shares += q; cost += q * px; cycle.pnl -= q * px * fee;
+      cycle.buys++; return q;
+    };
+    const sell = (i, q, px) => {
+      q = Math.min(q, shares); if (q < 1) return 0;
+      const avg = cost / shares;
+      cash += q * px * (1 - fee); cycle.pnl += (px - avg) * q - q * px * fee;
+      cost -= avg * q; shares -= q; if (!shares) cost = 0;
       return q;
     };
-    const sell = (i, price, q, why) => {
-      if (q < 1) return;
-      const avg = cost / shares, v = q * price;
-      cash += v * (1 - fee);
-      cycle.pnl += (price - avg) * q - v * fee;
-      cost -= avg * q; shares -= q;
-      trades.push({ d: bars[i].d, side: '매도', price, q, why });
-    };
-    const closeCycle = (i, result) => {
-      cycle.end = bars[i].d; cycle.days = i - cycle.i0; cycle.result = result;
-      cycle.ret = cycle.pnl / cycle.seed * 100; cycles.push(cycle); cycle = null; T = 0; cost = 0;
+    const endCycle = i => {
+      Object.assign(cycle, { end: bars[i].d, days: i - cycle.i0, ret: cycle.pnl / cycle.seed * 100 });
+      cycles.push(cycle); cycle = null; reserve += cash; cash = 0; T = 0; mode = 'none';
     };
 
-    for (let i = 0; i < bars.length; i++) {
+    let i0 = bars.findIndex(b => !p.from || b.d >= p.from), i1 = bars.length - 1;
+    while (p.to && i1 > 0 && bars[i1].d > p.to) i1--;
+    if (i0 < 0 || i1 - i0 < 1) throw new Error('기간 안에 데이터가 없어요.');
+    const span = bars.slice(i0, i1 + 1);
+    for (let i = i0; i <= i1; i++) {
       const b = bars[i];
-      if (!shares) {
-        const ok = !p.maFilter || (ma[i] != null && b.c > ma[i]);
-        if (ok) {
-          const base = p.compound ? cash : Math.min(cash, p.seed);
-          unit = base / p.splits;
-          cycle = { start: b.d, i0: i, seed: base, pnl: 0, cuts: 0 };
-          if (buy(i, b.c, unit, '첫 매수')) T = 1; else cycle = null;
+      if (mode === 'none') {                                   // ── 처음 매수
+        if (!p.maFilter || (ma[i] != null && b.c > ma[i])) {
+          const alloc = p.compound ? reserve : Math.min(reserve, p.seed);
+          reserve -= alloc; cash = alloc;
+          cycle = { start: b.d, i0: i, seed: alloc, pnl: 0, buys: 0, quarters: 0, reverses: 0 };
+          const ref = i ? bars[i - 1].c : b.c;                    // 수량은 전일 종가 기준(큰수 LOC)
+          const q = buy(i, Math.floor(cash / N / ref), '처음매수');
+          if (q) { T = 1; mode = 'normal'; log(i, '매수', b.c, q, '처음매수', '+1'); }
+          else { reserve += cash; cash = 0; cycle = null; }
         }
-      } else {
-        const avg = cost / shares;
-        const tp = avg * (1 + p.targetPct / 100);
-        const sl = p.stopLossPct ? avg * (1 - p.stopLossPct / 100) : 0;
-        if (b.h >= tp) {                                  // 익절 (지정가)
-          sell(i, Math.max(b.o, tp), shares, '익절'); closeCycle(i, '익절');
-        } else if (sl && b.l <= sl) {                      // 손절 (지정가)
-          sell(i, Math.min(b.o, sl), shares, '손절'); closeCycle(i, '손절');
+      } else if (mode === 'normal') {                          // ── 일반모드
+        const avg = cost / shares, unit = cash / (N - T);
+        const starPct = tg * (1 - 2 * T / N);
+        const star = r2(avg * (1 + starPct)), buyPx = r2(star - 0.01);
+        const tp = r2(avg * (1 + tg)), q4 = Math.floor(shares / 4);
+        let soldAll = false, limit = false, quarter = false, inc = 0;
+        if (b.h >= tp) {                                       // 3/4 지정가 매도
+          const px = Math.max(b.o, tp);
+          log(i, '매도', px, sell(i, shares - q4, px), '지정가 익절', '×0.25'); limit = true;
+        }
+        if (b.c >= star && q4 > 0) {                           // 1/4 쿼터매도 (별지점 LOC)
+          log(i, '매도', b.c, sell(i, q4, b.c), '쿼터매도', '×0.75'); quarter = true; cycle.quarters++;
+        }
+        if (!shares) soldAll = true;
+        else if (!quarter) {                                   // LOC 매수
+          const ladderQ = Math.floor(unit / b.c);
+          if (T < N / 2) {                                     // 전반전: 절반 별지점 + 절반 평단
+            const sQ = Math.floor(unit / 2 / buyPx), aQ = Math.max(0, Math.floor(unit / avg) - sQ);
+            if (b.c <= avg) { const q = buy(i, p.ladder ? Math.max(ladderQ, sQ + aQ) : sQ + aQ); if (q) { inc = 1; log(i, '매수', b.c, q, '평단+별지점 LOC', '+1'); } }
+            else if (b.c <= buyPx) { const q = buy(i, sQ); if (q) { inc = 0.5; log(i, '매수', b.c, q, '별지점 LOC', '+0.5'); } }
+          } else if (b.c <= buyPx) {                           // 후반전: 전체 별지점
+            const q = buy(i, p.ladder ? Math.max(ladderQ, Math.floor(unit / buyPx)) : Math.floor(unit / buyPx));
+            if (q) { inc = 1; log(i, '매수', b.c, q, '별지점 LOC(후반전)', '+1'); }
+          }
+        }
+        if (soldAll) { endCycle(i); }
+        else {
+          if (limit) T = T * 0.25 + inc; else if (quarter) T *= 0.75; else T += inc;
+          if (trades.length && trades[trades.length - 1].d === b.d) trades[trades.length - 1].T = T;
+          if (T > N - 1) { mode = 'reverse'; revDay = 0; cycle.reverses++; }
+        }
+      } else {                                                 // ── 리버스모드
+        revDay++;
+        const sQ = Math.floor(shares / revDiv);
+        if (revDay === 1) {                                    // 첫날: 무조건 MOC 매도
+          const q = sell(i, sQ, b.c); T *= revMul; log(i, '매도', b.c, q, '리버스 첫날 MOC', '×' + revMul);
         } else {
-          let lim1, lim2;
-          if (p.buyMode === 'laoer') { lim1 = avg; lim2 = avg * (1 + p.starPct / 100); }
-          else { const pc = bars[i - 1].c; lim1 = pc * (1 - p.locA / 100); lim2 = pc * (1 - p.locB / 100); }
-          if (T < p.splits) {
-            if (b.c <= lim1 && buy(i, b.c, unit / 2, 'LOC①')) T += 0.5;
-            if (b.c <= lim2 && buy(i, b.c, unit / 2, 'LOC②')) T += 0.5;
+          const star = r2(bars.slice(Math.max(0, i - 5), i).reduce((s, x) => s + x.c, 0) / 5), buyPx = r2(star - 0.01);
+          const amt = cash / 4;
+          if (Math.floor(amt / buyPx) < 1) {                   // 1주도 못 사면 MOC 매도만
+            const q = sell(i, sQ, b.c); T *= revMul; log(i, '매도', b.c, q, '리버스 MOC(잔금 부족)', '×' + revMul);
+          } else if (b.c >= star) {                            // 별지점(5일 평균) 위: LOC 매도
+            const q = sell(i, sQ, b.c); T *= revMul; log(i, '매도', b.c, q, '리버스매도 LOC', '×' + revMul);
+          } else if (b.c <= buyPx) {                           // 별지점 아래: 쿼터매수
+            const q = buy(i, p.ladder ? Math.floor(amt / b.c) : Math.floor(amt / buyPx));
+            if (q) { const d = (N - T) * 0.25; T += d; log(i, '매수', b.c, q, '리버스 쿼터매수', '+' + d.toFixed(3)); }
           }
-          if (T >= p.splits || cash < unit / 2) {          // 분할 소진
-            if (p.exhaust === 'quarter') { sell(i, b.c, Math.floor(shares / 4), '쿼터손절'); cycle.cuts++; T = Math.min(T, p.splits) * 0.75; }
-            else if (p.exhaust === 'stop') { sell(i, b.c, shares, '소진손절'); closeCycle(i, '손절'); }
-            if (shares === 0 && cycle) closeCycle(i, '손절');
-          }
+        }
+        if (trades.length && trades[trades.length - 1].d === b.d) trades[trades.length - 1].T = T;
+        if (!shares) endCycle(i);
+        else if (b.c > (cost / shares) * (1 - tg)) {           // 복귀: 종가 > 평단 × (1 − 목표%)
+          mode = 'normal'; if (T > N - 1) { mode = 'reverse'; revDay = 0; }
         }
       }
-      const eq = cash + shares * b.c;
+      const eq = reserve + cash + shares * b.c;
       peak = Math.max(peak, eq); mdd = Math.min(mdd, eq / peak - 1);
-      equity.push({ d: b.d, v: eq, t: T });
+      equity.push({ d: b.d, v: eq, t: T, m: mode });
     }
-    if (cycle) { cycle.end = '진행 중'; cycle.days = bars.length - 1 - cycle.i0; cycle.result = '진행 중'; cycle.ret = null; cycles.push(cycle); }
-
-    const bh = buyHold(bars, p.seed, fee);
-    return { params: p, equity, trades, cycles, stats: stats(bars, equity, p.seed, mdd, cycles), bh };
+    if (cycle) cycles.push(Object.assign(cycle, { end: '진행 중', days: i1 - cycle.i0, ret: null }));
+    const state = shares ? { mode, T, shares, avg: cost / shares, cash, unit: mode === 'normal' ? cash / (N - T) : cash / 4 } : null;
+    return { params: p, equity, trades, cycles, state, stats: stats(span, equity, p.seed, mdd, cycles), bh: buyHold(span, p.seed, fee) };
   }
 
+  function years(bars) { return Math.max((new Date(bars[bars.length - 1].d) - new Date(bars[0].d)) / 3.156e10, 1 / 365); }
   function stats(bars, equity, seed, mdd, cycles) {
     const end = equity.length ? equity[equity.length - 1].v : seed;
-    const yrs = Math.max((new Date(bars[bars.length - 1].d) - new Date(bars[0].d)) / 3.156e10, 1 / 365);
-    const done = cycles.filter(c => c.result !== '진행 중');
-    const wins = done.filter(c => c.pnl > 0);
+    const done = cycles.filter(c => c.ret != null), wins = done.filter(c => c.pnl > 0);
     return {
-      final: end, ret: (end / seed - 1) * 100, cagr: (Math.pow(end / seed, 1 / yrs) - 1) * 100, mdd: mdd * 100,
+      final: end, years: years(bars), ret: (end / seed - 1) * 100, cagr: (Math.pow(end / seed, 1 / years(bars)) - 1) * 100, mdd: mdd * 100,
       cycles: done.length, wins: wins.length, winRate: done.length ? wins.length / done.length * 100 : 0,
-      avgDays: wins.length ? wins.reduce((s, c) => s + c.days, 0) / wins.length : 0
+      avgDays: done.length ? done.reduce((s, c) => s + c.days, 0) / done.length : 0,
+      reverses: cycles.reduce((s, c) => s + c.reverses, 0)
     };
   }
-
   function buyHold(bars, seed, fee) {
-    const q = Math.floor(seed / (bars[0].c * (1 + fee)));
-    const left = seed - q * bars[0].c * (1 + fee);
+    const q = Math.floor(seed / (bars[0].c * (1 + fee))), left = seed - q * bars[0].c * (1 + fee);
     let peak = seed, mdd = 0;
     const equity = bars.map(b => { const v = left + q * b.c; peak = Math.max(peak, v); mdd = Math.min(mdd, v / peak - 1); return { d: b.d, v }; });
     const end = equity[equity.length - 1].v;
-    const yrs = Math.max((new Date(bars[bars.length - 1].d) - new Date(bars[0].d)) / 3.156e10, 1 / 365);
-    return { equity, ret: (end / seed - 1) * 100, cagr: (Math.pow(end / seed, 1 / yrs) - 1) * 100, mdd: mdd * 100, final: end };
+    return { equity, final: end, years: years(bars), ret: (end / seed - 1) * 100, cagr: (Math.pow(end / seed, 1 / years(bars)) - 1) * 100, mdd: mdd * 100 };
   }
-
   function movingAvg(bars, n) {
-    const out = new Array(bars.length).fill(null);
-    if (!n) return out;
+    const out = new Array(bars.length).fill(null); if (!n) return out;
     let s = 0;
-    for (let i = 0; i < bars.length; i++) {
-      s += bars[i].c; if (i >= n) s -= bars[i - n].c;
-      if (i >= n - 1) out[i] = s / n;
-    }
+    for (let i = 0; i < bars.length; i++) { s += bars[i].c; if (i >= n) s -= bars[i - n].c; if (i >= n - 1) out[i] = s / n; }
     return out;
   }
 
