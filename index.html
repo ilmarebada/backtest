@@ -75,9 +75,13 @@ td:first-child,th:first-child{text-align:left}
           <div><label for="targetPct">목표 수익률·별% (%)</label><input type="number" id="targetPct" value="20" step="0.5"></div>
           <div><label for="feePct">수수료(%)</label><input type="number" id="feePct" value="0.07" step="0.01"></div>
         </div>
-        <p class="note">별% = 목표% × (1 − 2T/분할수) · 쿼터매도 ×0.75 · 소진(T &gt; 분할수−1) 시 리버스모드. 목표%는 TQQQ 15, SOXL 20이 기본이에요.</p>
+        <p class="note">목표%는 TQQQ 15, SOXL 20이 기본이에요.</p>
         <label class="chk"><input type="checkbox" id="ladder" checked> 하락 대비 추가 LOC(사다리) 매수</label>
         <label class="chk"><input type="checkbox" id="compound" checked> 사이클 종료 후 복리로 재시작</label>
+        <label for="firstQty">처음매수 수량</label>
+        <select id="firstQty"><option value="prev">1회매수금 ÷ 전일종가</option><option value="big">1회매수금 ÷ 큰수(전일종가+10%)</option></select>
+        <label for="bigPct">큰수 매수 한도 % (급등일 미체결 반영, 0 = 끔)</label>
+        <input type="number" id="bigPct" value="0" min="0" max="20">
       </fieldset>
       <fieldset><legend>추가 필터 (선택)</legend>
         <label for="maFilter">새 사이클 시작 조건: 종가가 N일선 위 (0 = 끔)</label>
@@ -144,8 +148,8 @@ $('f').onsubmit = async e => {
   try {
     const t = csvBars ? ($('csv').files[0]?.name.replace('.csv', '') || 'CSV') : $('tk').value;
     let bars = csvBars || await load(t);
-    const opt = { from: $('from').value, to: $('to').value, ladder: $('ladder').checked, compound: $('compound').checked };
-    for (const k of ['seed', 'splits', 'targetPct', 'feePct', 'maFilter']) opt[k] = +$(k).value;
+    const opt = { from: $('from').value, to: $('to').value, ladder: $('ladder').checked, compound: $('compound').checked, firstQty: $('firstQty').value };
+    for (const k of ['seed', 'splits', 'targetPct', 'feePct', 'maFilter', 'bigPct']) opt[k] = +$(k).value;
     last = IBM.run(bars, opt); last.ticker = t;
     last.range = `${last.equity[0].d} ~ ${last.equity[last.equity.length - 1].d}`;
     history.unshift({ t, range: last.range, opt, s: last.stats, bh: last.bh });

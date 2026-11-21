@@ -5,13 +5,30 @@
     seed: 10000,      // 시작 원금($)
     splits: 20,       // 분할 수 (20 / 40)
     targetPct: 20,    // 목표 수익률 = 별% 시작값 (TQQQ 15, SOXL 20)
-    ladder: true,     // 하락 대비 추가 LOC(사다리) — 체결 시 1회매수금 ÷ 종가 만큼 매수
+    ladder: true,     // 하락 대비 추가 LOC(사다리): 1회매수금 ÷ (수량+k) 가격에 1주씩
+    ladderN: 99,      // 사다리 칸 수(라오어: 아래로 쭉)
+    bigPct: 0,        // (선택) 큰수 매수 한도: 주문가가 전일종가+20% 초과 시 전일종가+bigPct%로 합산 주문. 0 = 끔
+    ladderRound: 'round', // 사다리 가격 센트 처리: round(반올림) / floor(내림)
+    firstPct: 10,     // 처음매수 큰수 = 전일종가 × (1+firstPct%)
+    firstQty: 'prev', // 처음매수 수량 기준: prev(1회매수금÷전일종가) / big(1회매수금÷큰수가격, 라오어 표)
     compound: true,   // 사이클 종료 후 전체 잔금으로 재시작(복리) / false = 원금 한도(단리)
     feePct: 0.07,     // 매매 수수료(%)
     maFilter: 0,      // (선택) 새 사이클 시작 조건: 종가 > N일 이동평균, 0 = 끔
     from: '', to: ''  // 매매 기간(이전 데이터는 전일종가·이동평균·5일평균 계산에만 사용)
   };
   const r2 = x => Math.round(x * 100) / 100;
+  // 메인 LOC(가격 px, 수량 q) + 사다리(amt ÷ (q+k) 가격에 1주씩). 종가 c에서 체결되는 총 수량
+  function fillQty(p, amt, q, px, c, prev) {
+    if (c > px) return 0;
+    if (prev && p.bigPct && px > prev * 1.2 && c > prev * (1 + p.bigPct / 100)) return 0;   // 큰수 주문도 못 미친 급등일
+    if (!p.ladder) return q;
+    let n = q;
+    for (let k = 1; k <= p.ladderN; k++) {
+      const raw = amt / (q + k), rung = p.ladderRound === 'floor' ? Math.floor(raw * 100) / 100 : r2(raw);
+      if (rung >= px || c > rung) break; n++;
+    }
+    return n;
+  }
 
   function run(bars, opt) {
     const p = Object.assign({}, DEFAULTS, opt || {});
@@ -53,8 +70,9 @@
           const alloc = p.compound ? reserve : Math.min(reserve, p.seed);
           reserve -= alloc; cash = alloc;
           cycle = { start: b.d, i0: i, seed: alloc, pnl: 0, buys: 0, quarters: 0, reverses: 0 };
-          const ref = i ? bars[i - 1].c : b.c;                    // 수량은 전일 종가 기준(큰수 LOC)
-          const q = buy(i, Math.floor(cash / N / ref), '처음매수');
+          const prev = i ? bars[i - 1].c : b.c, big = r2(prev * (1 + p.firstPct / 100)), unit0 = cash / N;
+          const q0 = Math.floor(unit0 / (p.firstQty === 'big' ? big : prev));
+          const q = buy(i, fillQty(p, unit0, q0, big, b.c, prev), '처음매수');
           if (q) { T = 1; mode = 'normal'; log(i, '매수', b.c, q, '처음매수', '+1'); }
           else { reserve += cash; cash = 0; cycle = null; }
         }
@@ -73,13 +91,12 @@
         }
         if (!shares) soldAll = true;
         else if (!quarter) {                                   // LOC 매수
-          const ladderQ = Math.floor(unit / b.c);
-          if (T < N / 2) {                                     // 전반전: 절반 별지점 + 절반 평단
-            const sQ = Math.floor(unit / 2 / buyPx), aQ = Math.max(0, Math.floor(unit / avg) - sQ);
-            if (b.c <= avg) { const q = buy(i, p.ladder ? Math.max(ladderQ, sQ + aQ) : sQ + aQ); if (q) { inc = 1; log(i, '매수', b.c, q, '평단+별지점 LOC', '+1'); } }
-            else if (b.c <= buyPx) { const q = buy(i, sQ); if (q) { inc = 0.5; log(i, '매수', b.c, q, '별지점 LOC', '+0.5'); } }
-          } else if (b.c <= buyPx) {                           // 후반전: 전체 별지점
-            const q = buy(i, p.ladder ? Math.max(ladderQ, Math.floor(unit / buyPx)) : Math.floor(unit / buyPx));
+          if (T < N / 2) {                                     // 전반전: 절반 별지점 + 절반 평단 (+사다리)
+            const sQ = Math.floor(unit / 2 / buyPx), aQ = Math.max(0, Math.floor(unit / avg) - sQ), avgPx = r2(avg);
+            if (b.c <= avgPx) { const q = buy(i, fillQty(p, unit, sQ + aQ, avgPx, b.c, bars[i - 1].c)); if (q) { inc = 1; log(i, '매수', b.c, q, '평단+별지점 LOC', '+1'); } }
+            else if (b.c <= buyPx && fillQty(p, unit, sQ, buyPx, b.c, bars[i - 1].c)) { const q = buy(i, sQ); if (q) { inc = 0.5; log(i, '매수', b.c, q, '별지점 LOC', '+0.5'); } }
+          } else {                                             // 후반전: 전체 별지점 (+사다리)
+            const q = buy(i, fillQty(p, unit, Math.floor(unit / buyPx), buyPx, b.c, bars[i - 1].c));
             if (q) { inc = 1; log(i, '매수', b.c, q, '별지점 LOC(후반전)', '+1'); }
           }
         }
@@ -102,7 +119,7 @@
           } else if (b.c >= star) {                            // 별지점(5일 평균) 위: LOC 매도
             const q = sell(i, sQ, b.c); T *= revMul; log(i, '매도', b.c, q, '리버스매도 LOC', '×' + revMul);
           } else if (b.c <= buyPx) {                           // 별지점 아래: 쿼터매수
-            const q = buy(i, p.ladder ? Math.floor(amt / b.c) : Math.floor(amt / buyPx));
+            const q = buy(i, fillQty(p, amt, Math.floor(amt / buyPx), buyPx, b.c, bars[i - 1].c));
             if (q) { const d = (N - T) * 0.25; T += d; log(i, '매수', b.c, q, '리버스 쿼터매수', '+' + d.toFixed(3)); }
           }
         }
