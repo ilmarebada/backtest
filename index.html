@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>무한매수법 백테스터</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@600;800&family=Red+Hat+Text:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: 차분한 트레이딩 데스크, 숫자가 주인공
+   IDEA: 증권사 HTS의 전략 테스트 패널
+   PICTURE: 전략 vs 단순보유 자산 곡선 + 핵심 지표
+   COLOUR/TYPE: 네이비 바탕, 청록=전략, 노랑=단순보유, 빨강=손실 / Red Hat
+   LAYOUT: 좌측 조건 패널, 우측 결과. 600px 이하 세로 배치 */
+:root{color-scheme:dark;--bg:#0b1433;--panel:#121d45;--line:#243166;--ink:#e9edff;--mute:#9aa6d6;--a:#4fc1c6;--b:#f7e463;--bad:#e8452c;--blue:#3b4fd8}
+*{box-sizing:border-box;min-width:0}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Red Hat Text",system-ui,sans-serif;overflow-x:clip}
+h1{font:800 clamp(28px,4vw,44px)/1.05 "Red Hat Display",sans-serif;margin:0 0 6px;text-wrap:balance}
+h2{font:600 20px/1.2 "Red Hat Display",sans-serif;margin:0 0 12px}
+.wrap{max-width:1240px;margin:0 auto;padding:clamp(20px,3vw,40px) max(4vw,16px)}
+.sub{color:var(--mute);margin:0 0 24px}
+.grid{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:24px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+label{display:block;font-size:14px;color:var(--mute);margin:12px 0 4px}
+input,select{width:100%;font:16px "Red Hat Text",sans-serif;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;min-height:44px}
+input:focus,select:focus,button:focus{outline:2px solid var(--a);outline-offset:1px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+fieldset{border:0;padding:0;margin:16px 0 0;border-top:1px solid var(--line)}
+legend{font-weight:600;padding:12px 0 0}
+.chk{display:flex;gap:8px;align-items:center;color:var(--ink)}.chk input{width:auto;min-height:0}
+button{font:600 16px "Red Hat Text",sans-serif;border:0;border-radius:10px;min-height:48px;padding:0 18px;cursor:pointer}
+.go{width:100%;margin-top:18px;background:var(--a);color:#06202a}
+.ghost{background:transparent;color:var(--mute);border:1px solid var(--line);min-height:40px;font-size:14px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.kpi b{display:block;font:800 clamp(22px,2.6vw,32px)/1.1 "Red Hat Display",sans-serif;white-space:nowrap}
+.kpi>span{font-size:13px;color:var(--mute)}.kpi i{font-style:normal;font-size:13px;color:var(--b);display:block}
+.fig{position:relative;height:340px}.fig>svg{position:absolute;inset:0;width:100%;height:100%}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:14px;color:var(--mute);margin-top:8px}
+.legend s{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:6px;text-decoration:none}
+.scroll{overflow-x:auto;max-height:420px;overflow-y:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--mute);font-weight:600;position:sticky;top:0;background:var(--panel)}
+td:first-child,th:first-child{text-align:left}
+.pos{color:var(--a)}.neg{color:var(--bad)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 10px}
+.tabs button{background:transparent;color:var(--mute);border:1px solid var(--line);min-height:40px;font-size:14px}
+.tabs button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.msg{padding:14px;border-radius:10px;background:#1a2550;color:var(--mute);margin-bottom:16px}
+.note{font-size:13px;color:var(--mute);margin-top:12px}
+@media(max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:600px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.fig{height:260px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>무한매수법 백테스터</h1>
+  <p class="sub">티커와 기간, 조건을 넣고 실행하면 과거 데이터로 전략을 검증해요. 데이터는 매일 자동 업데이트돼요.</p>
+  <div class="grid">
+    <form class="panel" id="f">
+      <label for="tk">티커</label>
+      <select id="tk"></select>
+      <label for="csv">또는 CSV 파일 올리기 (야후 형식)</label>
+      <input type="file" id="csv" accept=".csv">
+      <div class="two">
+        <div><label for="from">시작일</label><input type="date" id="from" value="2015-01-01"></div>
+        <div><label for="to">종료일</label><input type="date" id="to"></div>
+      </div>
+      <fieldset><legend>기본</legend>
+        <div class="two">
+          <div><label for="seed">원금($)</label><input type="number" id="seed" value="10000" min="100"></div>
+          <div><label for="splits">분할 수</label><input type="number" id="splits" value="40" min="5" max="100"></div>
+          <div><label for="targetPct">익절 목표(%)</label><input type="number" id="targetPct" value="15" step="0.5"></div>
+          <div><label for="feePct">수수료(%)</label><input type="number" id="feePct" value="0.07" step="0.01"></div>
+        </div>
+      </fieldset>
+      <fieldset><legend>매수 방식</legend>
+        <select id="buyMode" aria-label="매수 방식">
+          <option value="laoer">평단 LOC + 큰수 LOC (라오어식)</option>
+          <option value="prevclose">전일 종가 −a%, −b% LOC</option>
+        </select>
+        <div class="two" id="mLaoer"><div><label for="starPct">큰수 LOC (평단 +%)</label><input type="number" id="starPct" value="10" step="0.5"></div></div>
+        <div class="two" id="mPrev" hidden>
+          <div><label for="locA">a (%)</label><input type="number" id="locA" value="1" step="0.5"></div>
+          <div><label for="locB">b (%)</label><input type="number" id="locB" value="5" step="0.5"></div>
+        </div>
+      </fieldset>
+      <fieldset><legend>위험 관리·필터</legend>
+        <label for="exhaust">분할 소진 시</label>
+        <select id="exhaust"><option value="quarter">쿼터 손절 (1/4 매도)</option><option value="stop">전량 손절</option><option value="hold">그냥 보유</option></select>
+        <div class="two">
+          <div><label for="stopLossPct">평단 대비 손절(%)</label><input type="number" id="stopLossPct" value="0" min="0" placeholder="0=끔"></div>
+          <div><label for="maFilter">시작 필터: N일선 위</label><input type="number" id="maFilter" value="0" min="0" placeholder="0=끔"></div>
+        </div>
+        <label class="chk"><input type="checkbox" id="compound" checked> 익절금 재투자 (복리)</label>
+      </fieldset>
+      <button class="go" type="submit">백테스트 실행</button>
+      <p class="note">손절·N일선은 0이면 꺼져요. 체결은 종가(LOC)·지정가(익절) 기준으로 가정해요.</p>
+    </form>
+
+    <section>
+      <div class="msg" id="msg">왼쪽에서 조건을 고르고 실행을 눌러주세요.</div>
+      <div id="out" hidden>
+        <div class="kpis" id="kpis"></div>
+        <div class="panel">
+          <h2 id="title"></h2>
+          <div class="fig"><svg id="chart" role="img" aria-label="자산 곡선"></svg></div>
+          <div class="legend"><span><s style="background:var(--a)"></s>무한매수법</span><span><s style="background:var(--b)"></s>단순 보유</span><label class="chk"><input type="checkbox" id="logScale" checked> 로그 스케일</label></div>
+        </div>
+        <div class="tabs" role="tablist">
+          <button type="button" class="on" data-t="cycles">사이클</button>
+          <button type="button" data-t="trades">매매 내역</button>
+          <button type="button" data-t="history">실행 기록 비교</button>
+        </div>
+        <div class="panel"><div class="scroll" id="tbl"></div></div>
+        <p class="note">과거 성과가 미래 수익을 보장하지 않아요. 배당·세금·환율은 반영하지 않았어요.</p>
+      </div>
+    </section>
+  </div>
+</div>
+<script src="engine.js"></script>
+<script>
+{
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 0) => v.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+const usd = v => (v < 0 ? '−$' : '$') + fmt(Math.abs(v));
+const pct = v => `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
+let data = {}, csvBars = null, last = null, tab = 'cycles';
+const history = [];
+$('to').value = new Date().toISOString().slice(0, 10);
+
+fetch('data/tickers.json').then(r => r.json()).then(list => {
+  $('tk').innerHTML = list.map(t => `<option>${t}</option>`).join('');
+}).catch(() => { $('tk').innerHTML = '<option value="">(데이터 없음: CSV를 올려주세요)</option>'; });
+
+$('buyMode').onchange = () => { const l = $('buyMode').value === 'laoer'; $('mLaoer').hidden = !l; $('mPrev').hidden = l; };
+$('csv').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rows = (await f.text()).trim().split(/\r?\n/), head = rows.shift().split(',').map(s => s.trim().toLowerCase());
+  const ix = k => head.indexOf(k);
+  csvBars = rows.map(r => r.split(',')).map(c => ({ d: c[ix('date')], o: +c[ix('open')], h: +c[ix('high')], l: +c[ix('low')], c: +c[ix('close')] }))
+    .filter(b => b.c > 0).sort((a, b) => a.d < b.d ? -1 : 1);
+  $('msg').textContent = `${f.name}: ${csvBars.length}일치 데이터를 읽었어요.`;
+};
+
+async function load(t) {
+  if (data[t]) return data[t];
+  const j = await (await fetch(`data/${t}.json`)).json();
+  return data[t] = j.rows.map(r => ({ d: r[0], o: r[1], h: r[2], l: r[3], c: r[4] }));
+}
+
+$('f').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    const t = csvBars ? ($('csv').files[0]?.name.replace('.csv', '') || 'CSV') : $('tk').value;
+    let bars = csvBars || await load(t);
+    bars = bars.filter(b => b.d >= $('from').value && b.d <= $('to').value);
+    if (bars.length < 30) throw new Error('기간 안에 데이터가 너무 적어요.');
+    const opt = {};
+    for (const k of ['seed', 'splits', 'targetPct', 'starPct', 'locA', 'locB', 'feePct', 'maFilter', 'stopLossPct']) opt[k] = +$(k).value;
+    opt.buyMode = $('buyMode').value; opt.exhaust = $('exhaust').value; opt.compound = $('compound').checked;
+    last = IBM.run(bars, opt); last.ticker = t; last.range = `${bars[0].d} ~ ${bars[bars.length - 1].d}`;
+    history.unshift({ t, range: last.range, opt, s: last.stats, bh: last.bh });
+    $('msg').hidden = true; $('out').hidden = false; render();
+  } catch (err) { $('msg').hidden = false; $('msg').textContent = '오류: ' + err.message; }
+};
+
+function render() {
+  const s = last.stats, bh = last.bh;
+  $('title').textContent = `${last.ticker} · ${last.range}`;
+  $('kpis').innerHTML = [
+    ['최종 자산', '$' + fmt(s.final), `단순보유 $${fmt(bh.final)}`],
+    ['연평균 수익률', pct(s.cagr), `단순보유 ${fmt(bh.cagr, 1)}%`],
+    ['최대 낙폭(MDD)', `<span class="neg">${fmt(s.mdd, 1)}%</span>`, `단순보유 ${fmt(bh.mdd, 1)}%`],
+    ['사이클 · 승률', `${s.cycles}회 · ${fmt(s.winRate)}%`, `익절까지 평균 ${fmt(s.avgDays)}거래일`]
+  ].map(k => `<div class="kpi"><span>${k[0]}</span><b>${k[1]}</b><i>${k[2]}</i></div>`).join('');
+  draw(); table();
+}
+
+const svg = $('chart');
+function draw() {
+  if (!last) return;
+  const W = svg.clientWidth, H = svg.clientHeight, L = 56, R = 10, T = 10, B = 26, log = $('logScale').checked;
+  const a = last.equity, b = last.bh.equity, n = a.length;
+  const f = v => log ? Math.log(Math.max(v, 1)) : v;
+  const all = a.concat(b).map(e => f(e.v)), lo = Math.min(...all), hi = Math.max(...all);
+  const x = i => L + i / (n - 1) * (W - L - R), y = v => T + (1 - (f(v) - lo) / (hi - lo || 1)) * (H - T - B);
+  const path = arr => arr.map((e, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(e.v).toFixed(1)).join('');
+  let g = '';
+  for (let k = 0; k <= 4; k++) {
+    const fv = lo + (hi - lo) * k / 4, v = log ? Math.exp(fv) : fv, yy = T + (1 - k / 4) * (H - T - B);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="#243166"/><text x="${L - 6}" y="${yy + 4}" fill="#9aa6d6" font-size="12" text-anchor="end">$${v >= 1e6 ? fmt(v / 1e6, 1) + 'M' : fmt(v / 1e3, 0) + 'k'}</text>`;
+  }
+  const ticks = W < 520 ? 2 : 5;
+  for (let k = 0; k <= ticks; k++) { const i = Math.round((n - 1) * k / ticks); g += `<text x="${x(i)}" y="${H - 6}" fill="#9aa6d6" font-size="12" text-anchor="${k === 0 ? 'start' : k === ticks ? 'end' : 'middle'}">${a[i].d.slice(0, W < 520 ? 4 : 7)}</text>`; }
+  svg.innerHTML = g + `<path d="${path(b)}" fill="none" stroke="#f7e463" stroke-width="1.5" opacity=".85"/><path d="${path(a)}" fill="none" stroke="#4fc1c6" stroke-width="2"/>`;
+}
+const ro = new ResizeObserver(draw); ro.observe(svg);
+$('logScale').onchange = draw;
+
+document.querySelectorAll('.tabs button').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === btn)); tab = btn.dataset.t; table();
+});
+function table() {
+  let h = '';
+  if (tab === 'cycles') {
+    h = '<table><thead><tr><th>시작</th><th>종료</th><th>거래일</th><th>투입 기준</th><th>손익</th><th>수익률</th><th>결과</th></tr></thead><tbody>' +
+      last.cycles.slice().reverse().map(c => `<tr><td>${c.start}</td><td>${c.end}</td><td>${c.days}</td><td>$${fmt(c.seed)}</td><td>${c.ret == null ? '-' : usd(c.pnl)}</td><td>${c.ret == null ? '-' : pct(c.ret)}</td><td>${c.result}${c.cuts ? ` (쿼터 ${c.cuts}회)` : ''}</td></tr>`).join('') + '</tbody></table>';
+  } else if (tab === 'trades') {
+    h = '<table><thead><tr><th>날짜</th><th>구분</th><th>사유</th><th>가격</th><th>수량</th><th>금액</th></tr></thead><tbody>' +
+      last.trades.slice(-500).reverse().map(t => `<tr><td>${t.d}</td><td class="${t.side === '매수' ? 'pos' : 'neg'}">${t.side}</td><td>${t.why}</td><td>$${fmt(t.price, 2)}</td><td>${t.q}</td><td>$${fmt(t.price * t.q)}</td></tr>`).join('') + '</tbody></table>';
+  } else {
+    h = '<table><thead><tr><th>티커</th><th>기간</th><th>조건</th><th>CAGR</th><th>MDD</th><th>승률</th><th>단순보유 CAGR</th></tr></thead><tbody>' +
+      history.map(r => `<tr><td>${r.t}</td><td>${r.range}</td><td>${r.opt.splits}분할 · ${r.opt.targetPct}% · ${r.opt.buyMode === 'laoer' ? '큰수 ' + r.opt.starPct + '%' : '-' + r.opt.locA + '/-' + r.opt.locB + '%'} · ${({ quarter: '쿼터', stop: '전량손절', hold: '보유' })[r.opt.exhaust]}${r.opt.maFilter ? ' · ' + r.opt.maFilter + '일선' : ''}${r.opt.stopLossPct ? ' · 손절' + r.opt.stopLossPct + '%' : ''}</td><td>${pct(r.s.cagr)}</td><td class="neg">${fmt(r.s.mdd, 1)}%</td><td>${fmt(r.s.winRate)}%</td><td>${fmt(r.bh.cagr, 1)}%</td></tr>`).join('') + '</tbody></table>';
+  }
+  $('tbl').innerHTML = h;
+}
+}
+</script>
+</body>
+</html>
