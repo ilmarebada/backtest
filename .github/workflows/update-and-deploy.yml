@@ -35,16 +35,19 @@ jobs:
       - run: pip install yfinance
       - name: 주가 데이터 받기
         run: python scripts/fetch_data.py "${{ github.event.inputs.add_tickers }}"
-      - name: 데이터 저장(커밋)
+      - name: 추가한 티커 목록 저장(주가 데이터는 커밋하지 않음)
+        if: github.event.inputs.add_tickers != ''
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add data tickers.txt
-          git diff --cached --quiet || git commit -m "데이터 업데이트 $(date -u +%F)"
+          git add tickers.txt
+          git diff --cached --quiet || git commit -m "티커 추가: ${{ github.event.inputs.add_tickers }}"
           git push
       - uses: actions/configure-pages@v5
+      - name: 배포할 파일 모으기
+        run: mkdir -p _site && cp -r index.html engine.js data _site/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - id: deploy
         uses: actions/deploy-pages@v4

@@ -6,12 +6,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 tickers_file = os.path.join(ROOT, "tickers.txt")
 extra = [t.strip().upper() for t in (sys.argv[1] if len(sys.argv) > 1 else "").split(",") if t.strip()]
 
-tickers = [t.strip().upper() for t in open(tickers_file, encoding="utf-8") if t.strip() and not t.startswith("#")]
-for t in extra:
-    if t not in tickers:
-        tickers.append(t)
-with open(tickers_file, "w", encoding="utf-8") as f:
-    f.write("\n".join(tickers) + "\n")
+lines = open(tickers_file, encoding="utf-8").read().splitlines()
+tickers = [t.strip().upper() for t in lines if t.strip() and not t.startswith("#")]
+new = [t for t in extra if t not in tickers]
+if new:
+    with open(tickers_file, "a", encoding="utf-8") as f:
+        f.write("# 추가\n" + "\n".join(new) + "\n")
+    tickers += new
 
 os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
 ok = []

@@ -71,7 +71,7 @@ td:first-child,th:first-child{text-align:left}
       <fieldset><legend>무한매수법 V4.0</legend>
         <div class="two">
           <div><label for="seed">원금($)</label><input type="number" id="seed" value="10000" min="100"></div>
-          <div><label for="splits">분할 수</label><select id="splits"><option>20</option><option selected>40</option></select></div>
+          <div><label for="splits">분할 수</label><select id="splits"><option>20</option><option>30</option><option selected>40</option></select></div>
           <div><label for="targetPct">목표 수익률·별% (%)</label><input type="number" id="targetPct" value="20" step="0.5"></div>
           <div><label for="feePct">수수료(%)</label><input type="number" id="feePct" value="0.07" step="0.01"></div>
         </div>
@@ -124,10 +124,22 @@ const history = [];
 $('to').value = new Date().toISOString().slice(0, 10);
 
 fetch('data/tickers.json').then(r => r.json()).then(list => {
-  $('tk').innerHTML = list.map(t => `<option${t === 'SOXL' ? ' selected' : ''}>${t}</option>`).join('');
+  const groups = [
+    ['3배 · 지수', { TQQQ: '나스닥100', UPRO: 'S&P500', SPXL: 'S&P500', UDOW: '다우', TNA: '러셀2000', URTY: '러셀2000', MIDU: '중형주' }],
+    ['3배 · 섹터/테마', { SOXL: '반도체', TECL: '기술', FNGU: '빅테크', BULZ: '혁신기술', FAS: '금융', DPST: '지역은행', LABU: '바이오', CURE: '헬스케어', DFEN: '방산', DRN: '리츠', NAIL: '주택건설', HIBL: '고베타', WEBL: '인터넷', RETL: '리테일', UTSL: '유틸리티', WANT: '소비재', DUSL: '산업재', PILL: '제약', TPOR: '운송', YINN: '중국', TMF: '미 장기채' }],
+    ['2배', { QLD: '나스닥100', SSO: 'S&P500', USD: '반도체', ROM: '기술', NVDL: '엔비디아', TSLL: '테슬라' }],
+    ['1배 (비교용)', { QQQ: '나스닥100', SPY: 'S&P500', SOXX: '반도체', SMH: '반도체' }]
+  ];
+  const known = new Set(groups.flatMap(g => Object.keys(g[1])));
+  const opt = (t, n) => `<option value="${t}"${t === 'SOXL' ? ' selected' : ''}>${t}${n ? ' · ' + n : ''}</option>`;
+  const etc = list.filter(t => !known.has(t));
+  $('tk').innerHTML = groups.map(([g, m]) => {
+    const items = Object.keys(m).filter(t => list.includes(t));
+    return items.length ? `<optgroup label="${g}">${items.map(t => opt(t, m[t])).join('')}</optgroup>` : '';
+  }).join('') + (etc.length ? `<optgroup label="기타">${etc.map(t => opt(t)).join('')}</optgroup>` : '');
 }).catch(() => { $('tk').innerHTML = '<option value="">(데이터 없음: CSV를 올려주세요)</option>'; });
 
-$('tk').onchange = () => { $('targetPct').value = $('tk').value === 'TQQQ' ? 15 : 20; };
+$('tk').onchange = () => { $('targetPct').value = $('tk').value === 'SOXL' ? 20 : 15; };
 $('csv').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   const rows = (await f.text()).trim().split(/\r?\n/), head = rows.shift().split(',').map(s => s.trim().toLowerCase());
