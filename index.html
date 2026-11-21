@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>무한매수법 백테스터</title>
+<meta name="description" content="레버리지 ETF 38종 · 20/30/40분할 · 기초지수 비교까지, 과거 데이터로 바로 검증하는 무한매수법 V4.0 백테스터">
+<meta property="og:type" content="website">
+<meta property="og:title" content="무한매수법 V4.0 백테스터">
+<meta property="og:description" content="레버리지 ETF 38종 · 20/30/40분할 · 기초지수 비교 · 매일 자동 업데이트">
+<meta property="og:url" content="https://ilmarebada.github.io/backtest/">
+<meta property="og:image" content="https://ilmarebada.github.io/backtest/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@600;800&family=Red+Hat+Text:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -99,7 +108,7 @@ td:first-child,th:first-child{text-align:left}
         <div class="panel">
           <h2 id="title"></h2>
           <div class="fig"><svg id="chart" role="img" aria-label="자산 곡선"></svg></div>
-          <div class="legend"><span><s style="background:var(--a)"></s>무한매수법</span><span><s style="background:var(--b)"></s>단순 보유</span><label class="chk"><input type="checkbox" id="logScale" checked> 로그 스케일</label></div>
+          <div class="legend"><span><s style="background:var(--a)"></s>무한매수법</span><span><s style="background:var(--b)"></s><span id="bhLg">단순 보유</span></span><span id="benchLg" hidden><s style="background:#c9b8ff"></s><span id="benchTx"></span></span><label class="chk"><input type="checkbox" id="logScale" checked> 로그 스케일</label></div>
         </div>
         <div class="tabs" role="tablist">
           <button type="button" class="on" data-t="cycles">사이클</button>
@@ -119,7 +128,8 @@ const $ = id => document.getElementById(id);
 const fmt = (v, d = 0) => v.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
 const usd = v => (v < 0 ? '−$' : '$') + fmt(Math.abs(v));
 const pct = v => `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
-let data = {}, csvBars = null, last = null, tab = 'cycles';
+let data = {}, csvBars = null, last = null, tab = 'cycles', benchMap = {};
+fetch('data/benchmarks.json').then(r => r.json()).then(m => { benchMap = m; }).catch(() => {});
 const history = [];
 $('to').value = new Date().toISOString().slice(0, 10);
 
@@ -163,8 +173,25 @@ $('f').onsubmit = async e => {
     const opt = { from: $('from').value, to: $('to').value, ladder: $('ladder').checked, compound: $('compound').checked, firstQty: $('firstQty').value };
     for (const k of ['seed', 'splits', 'targetPct', 'feePct', 'maFilter', 'bigPct']) opt[k] = +$(k).value;
     last = IBM.run(bars, opt); last.ticker = t;
+    last.bench = null;
+    const bt = !csvBars && benchMap[t];
+    if (bt) {                                                  // 기초지수 단순보유 곡선 (같은 원금, 같은 날짜)
+      try {
+        const bb = await load(bt), byDate = new Map(bb.map(x => [x.d, x.c]));
+        let px = null, q = null, peak = 0, mdd = 0;
+        const eq = last.equity.map(e => {
+          if (byDate.has(e.d)) px = byDate.get(e.d);
+          if (px != null && q == null) q = opt.seed / px;
+          const v = q == null ? opt.seed : q * px; peak = Math.max(peak, v); mdd = Math.min(mdd, v / peak - 1);
+          return { d: e.d, v };
+        });
+        const yrs = Math.max((new Date(eq[eq.length - 1].d) - new Date(eq[0].d)) / 3.156e10, 1 / 365), end = eq[eq.length - 1].v;
+        last.bench = { t: bt, equity: eq, ret: (end / opt.seed - 1) * 100, cagr: (Math.pow(end / opt.seed, 1 / yrs) - 1) * 100, mdd: mdd * 100 };
+      } catch (e) {}
+    }
     last.range = `${last.equity[0].d} ~ ${last.equity[last.equity.length - 1].d}`;
-    history.unshift({ t, range: last.range, opt, s: last.stats, bh: last.bh });
+
+    history.unshift({ t, range: last.range, opt, s: last.stats, bh: last.bh, bench: last.bench });
     $('msg').hidden = true; $('out').hidden = false; render();
   } catch (err) { $('msg').hidden = false; $('msg').textContent = '오류: ' + err.message; }
 };
@@ -178,6 +205,9 @@ function render() {
     ['최대 낙폭(MDD)', `<span class="neg">${fmt(s.mdd, 1)}%</span>`, `단순보유 ${fmt(bh.mdd, 1)}%`],
     ['완료 사이클 · 승률', `${s.cycles}회 · ${fmt(s.winRate)}%`, `평균 ${fmt(s.avgDays)}거래일 · 리버스 ${s.reverses}회`]
   ].map(k => `<div class="kpi"><span>${k[0]}</span><b>${k[1]}</b><i>${k[2]}</i></div>`).join('');
+  $('bhLg').textContent = `${last.ticker} 단순 보유`;
+  $('benchLg').hidden = !last.bench;
+  if (last.bench) $('benchTx').textContent = `기초지수 ${last.bench.t} 보유 · ${s.years >= 1 ? '연 ' + fmt(last.bench.cagr, 1) : '기간 ' + fmt(last.bench.ret, 1)}% · MDD ${fmt(last.bench.mdd, 1)}%`;
   const st = last.state;
   $('state').hidden = !st;
   if (st) $('state').innerHTML = `<b>마지막 날 상태</b> · ${st.mode === 'reverse' ? '리버스모드' : '일반모드'} · T ${fmt(st.T, 3)} · 보유 ${st.shares}주 · 평단 $${fmt(st.avg, 2)} · 잔금 $${fmt(st.cash)} · 다음 ${st.mode === 'reverse' ? '쿼터매수금' : '1회매수금'} $${fmt(st.unit)}`;
@@ -188,9 +218,9 @@ const svg = $('chart');
 function draw() {
   if (!last) return;
   const W = svg.clientWidth, H = svg.clientHeight, L = 56, R = 10, T = 10, B = 26, log = $('logScale').checked;
-  const a = last.equity, b = last.bh.equity, n = a.length;
+  const a = last.equity, b = last.bh.equity, c = last.bench ? last.bench.equity : [], n = a.length;
   const f = v => log ? Math.log(Math.max(v, 1)) : v;
-  const all = a.concat(b).map(e => f(e.v)), lo = Math.min(...all), hi = Math.max(...all);
+  const all = a.concat(b, c).map(e => f(e.v)), lo = Math.min(...all), hi = Math.max(...all);
   const x = i => L + i / (n - 1) * (W - L - R), y = v => T + (1 - (f(v) - lo) / (hi - lo || 1)) * (H - T - B);
   const path = arr => arr.map((e, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(e.v).toFixed(1)).join('');
   let g = '';
@@ -200,7 +230,7 @@ function draw() {
   }
   const ticks = W < 520 ? 2 : 5;
   for (let k = 0; k <= ticks; k++) { const i = Math.round((n - 1) * k / ticks); g += `<text x="${x(i)}" y="${H - 6}" fill="#9aa6d6" font-size="12" text-anchor="${k === 0 ? 'start' : k === ticks ? 'end' : 'middle'}">${a[i].d.slice(0, W < 520 ? 4 : 7)}</text>`; }
-  svg.innerHTML = g + `<path d="${path(b)}" fill="none" stroke="#f7e463" stroke-width="1.5" opacity=".85"/><path d="${path(a)}" fill="none" stroke="#4fc1c6" stroke-width="2"/>`;
+  svg.innerHTML = g + (c.length ? `<path d="${path(c)}" fill="none" stroke="#c9b8ff" stroke-width="1.5" opacity=".9"/>` : '') + `<path d="${path(b)}" fill="none" stroke="#f7e463" stroke-width="1.5" opacity=".85"/><path d="${path(a)}" fill="none" stroke="#4fc1c6" stroke-width="2"/>`;
 }
 const ro = new ResizeObserver(draw); ro.observe(svg);
 $('logScale').onchange = draw;
@@ -217,8 +247,8 @@ function table() {
     h = '<table><thead><tr><th>날짜(미국)</th><th>구분</th><th>사유</th><th>T 변화</th><th>T</th><th>가격</th><th>수량</th><th>금액</th></tr></thead><tbody>' +
       last.trades.slice(-500).reverse().map(t => `<tr><td>${t.d}</td><td class="${t.side === '매수' ? 'pos' : 'neg'}">${t.side}</td><td>${t.why}</td><td>${t.dT}</td><td>${fmt(t.T, 3)}</td><td>$${fmt(t.price, 2)}</td><td>${t.q}</td><td>$${fmt(t.price * t.q)}</td></tr>`).join('') + '</tbody></table>';
   } else {
-    h = '<table><thead><tr><th>티커</th><th>기간</th><th>조건</th><th>CAGR</th><th>MDD</th><th>승률</th><th>단순보유 CAGR</th></tr></thead><tbody>' +
-      history.map(r => `<tr><td>${r.t}</td><td>${r.range}</td><td>${r.opt.splits}분할 · ${r.opt.targetPct}%${r.opt.ladder ? ' · 사다리' : ''}${r.opt.compound ? ' · 복리' : ' · 단리'}${r.opt.maFilter ? ' · ' + r.opt.maFilter + '일선' : ''}</td><td>${pct(r.s.cagr)}</td><td class="neg">${fmt(r.s.mdd, 1)}%</td><td>${fmt(r.s.winRate)}%</td><td>${fmt(r.bh.cagr, 1)}%</td></tr>`).join('') + '</tbody></table>';
+    h = '<table><thead><tr><th>티커</th><th>기간</th><th>조건</th><th>CAGR</th><th>MDD</th><th>승률</th><th>단순보유 CAGR</th><th>기초지수 CAGR</th></tr></thead><tbody>' +
+      history.map(r => `<tr><td>${r.t}</td><td>${r.range}</td><td>${r.opt.splits}분할 · ${r.opt.targetPct}%${r.opt.ladder ? ' · 사다리' : ''}${r.opt.compound ? ' · 복리' : ' · 단리'}${r.opt.maFilter ? ' · ' + r.opt.maFilter + '일선' : ''}</td><td>${pct(r.s.cagr)}</td><td class="neg">${fmt(r.s.mdd, 1)}%</td><td>${fmt(r.s.winRate)}%</td><td>${fmt(r.bh.cagr, 1)}%</td><td>${r.bench ? r.bench.t + ' ' + fmt(r.bench.cagr, 1) + '%' : '-'}</td></tr>`).join('') + '</tbody></table>';
   }
   $('tbl').innerHTML = h;
 }

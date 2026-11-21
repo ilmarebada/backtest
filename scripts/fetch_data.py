@@ -15,8 +15,13 @@ if new:
     tickers += new
 
 os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
-ok = []
-for t in tickers:
+bench = {}
+for line in open(os.path.join(ROOT, "benchmarks.txt"), encoding="utf-8"):
+    if "=" in line and not line.startswith("#"):
+        k, v = line.strip().upper().split("=", 1)
+        bench[k] = v
+ok, got = [], set()
+for t in tickers + sorted(set(bench.values()) - set(tickers)):
     try:
         df = yf.Ticker(t).history(period="max", auto_adjust=False)  # 액면분할 반영 가격
         df = df.dropna(subset=["Close"])
@@ -26,10 +31,13 @@ for t in tickers:
                 for d, r in df.iterrows()]
         with open(os.path.join(ROOT, "data", f"{t}.json"), "w") as f:
             json.dump({"ticker": t, "rows": rows}, f, separators=(",", ":"))
-        ok.append(t)
+        got.add(t)
+        if t in tickers: ok.append(t)
         print(f"[ok] {t}: {rows[0][0]} ~ {rows[-1][0]} ({len(rows)}일)")
     except Exception as e:
         print(f"[fail] {t}: {e}")
 
 with open(os.path.join(ROOT, "data", "tickers.json"), "w") as f:
     json.dump(ok, f)
+with open(os.path.join(ROOT, "data", "benchmarks.json"), "w") as f:
+    json.dump({k: v for k, v in bench.items() if v in got}, f)
