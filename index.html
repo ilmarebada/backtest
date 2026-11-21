@@ -85,7 +85,7 @@ td:first-child,th:first-child{text-align:left}
         <div><label for="from">시작일</label><input type="date" id="from"></div>
         <div><label for="to">종료일</label><input type="date" id="to"></div>
       </div>
-      <div class="presets" id="presets"><button type="button" data-y="1">1년</button><button type="button" data-y="3">3년</button><button type="button" data-y="5">5년</button><button type="button" data-y="10">10년</button><button type="button" data-y="0">전체</button></div>
+      <div class="presets" id="presets"><button type="button" data-m="1">1개월</button><button type="button" data-m="3">3개월</button><button type="button" data-m="6">6개월</button><button type="button" data-m="12">1년</button><button type="button" data-m="36">3년</button><button type="button" data-m="60">5년</button><button type="button" data-m="120">10년</button><button type="button" data-m="0">전체</button></div>
       <fieldset><legend>무한매수법 V4.0</legend>
         <div class="two">
           <div><label for="seed">원금($)</label><input type="number" id="seed" value="10000" min="100"></div>
@@ -152,14 +152,14 @@ const history = [];
 const ymd = d => new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
 const today = ymd(new Date());
 $('to').value = today;
-const setPreset = y => {
-  const d = new Date(); if (y) d.setFullYear(d.getFullYear() - y);
-  $('from').value = y ? ymd(d) : '1990-01-01'; $('to').value = today;
-  document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', +b.dataset.y === y));
+const setPreset = m => {
+  const d = new Date(); if (m) d.setMonth(d.getMonth() - m);
+  $('from').value = m ? ymd(d) : '1990-01-01'; $('to').value = today;
+  document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', +b.dataset.m === m));
 };
-document.querySelectorAll('#presets button').forEach(b => b.onclick = () => setPreset(+b.dataset.y));
+document.querySelectorAll('#presets button').forEach(b => b.onclick = () => setPreset(+b.dataset.m));
 $('from').oninput = () => document.querySelectorAll('#presets button').forEach(b => b.classList.remove('on'));
-setPreset(10);
+$('from').value = today;
 
 fetch('data/tickers.json').then(r => r.json()).then(list => {
   const groups = [
@@ -200,6 +200,7 @@ $('f').onsubmit = async e => {
     let bars = csvBars || await load(t);
     const opt = { from: $('from').value, to: $('to').value, ladder: $('ladder').checked, compound: $('compound').checked, firstQty: $('firstQty').value };
     for (const k of ['seed', 'splits', 'targetPct', 'feePct', 'maFilter', 'bigPct']) opt[k] = +$(k).value;
+    if (bars.filter(b => b.d >= opt.from && b.d <= opt.to).length < 2) throw new Error('기간이 너무 짧아요. 시작일을 고르거나 위의 기간 버튼(1개월~전체)을 눌러주세요.');
     last = IBM.run(bars, opt); last.ticker = t;
     last.bench = null;
     const bt = !csvBars && benchMap[t];
@@ -221,7 +222,7 @@ $('f').onsubmit = async e => {
 
     history.unshift({ t, range: last.range, opt, s: last.stats, bh: last.bh, bench: last.bench });
     $('msg').hidden = true; $('out').hidden = false; render();
-  } catch (err) { $('msg').hidden = false; $('msg').textContent = '오류: ' + err.message; }
+  } catch (err) { $('msg').hidden = false; $('msg').textContent = err.message; }
 };
 
 function render() {
