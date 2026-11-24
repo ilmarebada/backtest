@@ -165,7 +165,9 @@ fetch('data/tickers.json').then(r => r.json()).then(list => {
   const groups = [
     ['3배 · 지수', { TQQQ: '나스닥100', UPRO: 'S&P500', SPXL: 'S&P500', UDOW: '다우', TNA: '러셀2000', URTY: '러셀2000', MIDU: '중형주' }],
     ['3배 · 섹터/테마', { SOXL: '반도체', TECL: '기술', FNGU: '빅테크', BULZ: '혁신기술', FAS: '금융', DPST: '지역은행', LABU: '바이오', CURE: '헬스케어', DFEN: '방산', DRN: '리츠', NAIL: '주택건설', HIBL: '고베타', WEBL: '인터넷', RETL: '리테일', UTSL: '유틸리티', WANT: '소비재', DUSL: '산업재', PILL: '제약', TPOR: '운송', YINN: '중국', TMF: '미 장기채' }],
-    ['2배', { QLD: '나스닥100', SSO: 'S&P500', USD: '반도체', ROM: '기술', NVDL: '엔비디아', TSLL: '테슬라' }],
+    ['3배 · 해외/원자재', { EDC: '신흥국', EURL: '유럽', KORU: '한국', MEXX: '멕시코', BRZU: '브라질', GUSH: '석유가스' }],
+    ['2배 · 지수/섹터', { QLD: '나스닥100', SSO: 'S&P500', USD: '반도체', ROM: '기술', ERX: '에너지', NUGT: '금광', JNUG: '중소형 금광', CHAU: '중국A주', INDL: '인도' }],
+    ['2배 · 개별주', { AAPU: '애플', NVDU: '엔비디아', NVDL: '엔비디아', TSLL: '테슬라', AMZU: '아마존', MSFU: '마이크로소프트', GGLL: '구글', FBL: '메타', AMDL: 'AMD', PLTU: '팔란티어', CONL: '코인베이스', MSTU: '마이크로스트래티지' }],
     ['1배 (비교용)', { QQQ: '나스닥100', SPY: 'S&P500', SOXX: '반도체', SMH: '반도체' }]
   ];
   const known = new Set(groups.flatMap(g => Object.keys(g[1])));
